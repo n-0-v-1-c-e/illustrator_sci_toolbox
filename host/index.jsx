@@ -88,6 +88,20 @@ var addBorderButton = document.querySelector("#add-border-button");
 var borderDashInput = document.querySelector("#border-dash");
 var autoGroupBorderCheckbox = document.querySelector("#auto-group-border");
 
+// Text Grid UI Elements
+var textgridDirectionSelect = document.querySelector("#textgrid-direction");
+var textgridDefaultTextInput = document.querySelector("#textgrid-default-text");
+var textgridFontFamilySelect = document.querySelector("#textgrid-font-family");
+var textgridFontSizeInput = document.querySelector("#textgrid-font-size");
+var textgridFontBoldCheckbox = document.querySelector("#textgrid-font-bold");
+var textgridFontColorInput = document.querySelector("#textgrid-font-color");
+var textgridAlignmentSelect = document.querySelector("#textgrid-alignment");
+var textgridDistanceInput = document.querySelector("#textgrid-distance");
+var textgridOrderSelect = document.querySelector("#textgrid-order");
+var textgridReverseOrderCheckbox = document.querySelector("#textgrid-reverse-order");
+var textgridAddButton = document.querySelector("#textgrid-add-button");
+var textgridAlignButton = document.querySelector("#textgrid-align-button");
+
 // Event Listeners
 arrangeButton.addEventListener("click", handleArrange);
 addLabelButton.addEventListener("click", handleAddLabel);
@@ -104,6 +118,9 @@ copySizeButton.addEventListener("click", handleCopySize);
 pasteSizeButton.addEventListener("click", handlePasteSize);
 
 addBorderButton.addEventListener("click", handleAddBorder);
+
+textgridAddButton.addEventListener("click", handleTextGridAdd);
+textgridAlignButton.addEventListener("click", handleTextGridAlign);
 
 distributeVerticalButton.addEventListener("click", () => handleDistributeSpacing("vertical"));
 distributeHorizontalButton.addEventListener("click", () => handleDistributeSpacing("horizontal"));
@@ -662,6 +679,67 @@ function handleLabelOffsetWheel(event) {
 
     // Trigger the input change handler to update labels in real-time
     handleLabelOffsetChange();
+}
+
+function handleTextGridAdd() {
+    var direction = textgridDirectionSelect.value || "bottom";
+    var defaultText = textgridDefaultTextInput.value || "";
+    var fontFamily = textgridFontFamilySelect.value || "TimesNewRomanPSMT";
+    var fontSize = parseFloat(textgridFontSizeInput.value) || 8;
+    var fontBold = !!(textgridFontBoldCheckbox && textgridFontBoldCheckbox.checked);
+    var fontColor = textgridFontColorInput.value || "#000000";
+    var alignment = textgridAlignmentSelect.value || "CENTER";
+    var distance = parseFloat(textgridDistanceInput.value);
+    if (isNaN(distance)) distance = 3;
+    var order = (textgridOrderSelect && textgridOrderSelect.value) || "vertical";
+    var revOrder = !!(textgridReverseOrderCheckbox && textgridReverseOrderCheckbox.checked);
+
+    csInterface.evalScript('$.evalFile("' + csInterface.getSystemPath(SystemPath.EXTENSION) + '/jsx/arrange.jsx")');
+    csInterface.evalScript(
+        'addTextGrid("' + direction + '","' + defaultText.replace(/"/g, '\\"') + '","' +
+        fontFamily + '",' + fontSize + ',' + fontBold + ',"' + fontColor + '","' +
+        alignment + '",' + distance + ',"' + order + '",' + revOrder + ')',
+        function (result) {
+            if (result === 'EvalScript error.') {
+                alert('Error executing the script');
+            } else if (result && result.indexOf("Error:") === 0) {
+                alert(result);
+            }
+            if (typeof PluginSettings !== 'undefined') {
+                PluginSettings.save();
+            }
+        }
+    );
+}
+
+function handleTextGridAlign() {
+    var direction = textgridDirectionSelect.value || "bottom";
+    var fontFamily = textgridFontFamilySelect.value || "TimesNewRomanPSMT";
+    var fontSize = parseFloat(textgridFontSizeInput.value) || 8;
+    var fontBold = !!(textgridFontBoldCheckbox && textgridFontBoldCheckbox.checked);
+    var fontColor = textgridFontColorInput.value || "#000000";
+    var alignment = textgridAlignmentSelect.value || "CENTER";
+    var distance = parseFloat(textgridDistanceInput.value);
+    if (isNaN(distance)) distance = 3;
+    var order = (textgridOrderSelect && textgridOrderSelect.value) || "vertical";
+    var revOrder = !!(textgridReverseOrderCheckbox && textgridReverseOrderCheckbox.checked);
+
+    csInterface.evalScript('$.evalFile("' + csInterface.getSystemPath(SystemPath.EXTENSION) + '/jsx/arrange.jsx")');
+    csInterface.evalScript(
+        'alignTextGrid("' + direction + '","' + fontFamily + '",' + fontSize + ',' +
+        fontBold + ',"' + fontColor + '","' + alignment + '",' + distance + ',"' +
+        order + '",' + revOrder + ')',
+        function (result) {
+            if (result === 'EvalScript error.') {
+                alert('Error executing the script');
+            } else if (result && result.indexOf("Error:") === 0) {
+                alert(result);
+            }
+            if (typeof PluginSettings !== 'undefined') {
+                PluginSettings.save();
+            }
+        }
+    );
 }
 
 function handleAddBorder() {

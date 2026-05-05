@@ -1350,3 +1350,270 @@ function updateLabelOffsets(offsetX, offsetY, sessionId) {
     }
     return "Success";
 }
+
+function detectGrid(items, order, reverseOrder) {
+    var ordered = getOrderedSelection(items, order || "stacking", !!reverseOrder);
+    var n = ordered.length;
+    if (n === 0) return null;
+
+    var infos = [];
+    for (var i = 0; i < n; i++) {
+        infos.push(getVisibleInfo(ordered[i]));
+    }
+
+    // Sort indices by Y (top descending), then X (left ascending)
+    var indices = [];
+    for (var j = 0; j < n; j++) indices.push(j);
+    indices.sort(function (a, b) {
+        var cyA = (infos[a].top + infos[a].bottom) / 2;
+        var cyB = (infos[b].top + infos[b].bottom) / 2;
+        if (cyA > cyB) return -1;
+        if (cyA < cyB) return 1;
+        if (infos[a].left < infos[b].left) return -1;
+        if (infos[a].left > infos[b].left) return 1;
+        return 0;
+    });
+
+    // Cluster into rows by Y proximity
+    var rows = [];
+    var currentRow = { indices: [], top: -Infinity, bottom: Infinity };
+    for (var k = 0; k < indices.length; k++) {
+        var idx = indices[k];
+        var info = infos[idx];
+        var centerY = (info.top + info.bottom) / 2;
+
+        if (currentRow.indices.length === 0) {
+            currentRow.indices.push(idx);
+            currentRow.top = info.top;
+            currentRow.bottom = info.bottom;
+        } else {
+            var rowCenterY = (currentRow.top + currentRow.bottom) / 2;
+            var rowHeight = currentRow.top - currentRow.bottom;
+            var tolerance = rowHeight * 0.5;
+            if (Math.abs(centerY - rowCenterY) <= tolerance) {
+                currentRow.indices.push(idx);
+                if (info.top > currentRow.top) currentRow.top = info.top;
+                if (info.bottom < currentRow.bottom) currentRow.bottom = info.bottom;
+            } else {
+                currentRow.centerY = (currentRow.top + currentRow.bottom) / 2;
+                rows.push(currentRow);
+                currentRow = { indices: [idx], top: info.top, bottom: info.bottom };
+            }
+        }
+    }
+    if (currentRow.indices.length > 0) {
+        currentRow.centerY = (currentRow.top + currentRow.bottom) / 2;
+        rows.push(currentRow);
+    }
+
+    // Sort each row's items by X (left to right)
+    for (var r = 0; r < rows.length; r++) {
+        rows[r].indices.sort(function (a, b) {
+            return infos[a].left - infos[b].left;
+        });
+    }
+
+    // Determine columns
+    var maxCols = 0;
+    for (var r2 = 0; r2 < rows.length; r2++) {
+        if (rows[r2].indices.length > maxCols) maxCols = rows[r2].indices.length;
+    }
+
+    var columns = [];
+    for (var c = 0; c < maxCols; c++) {
+        var colInfo = { left: Infinity, right: -Infinity, indices: [] };
+        for (var r3 = 0; r3 < rows.length; r3++) {
+            if (c < rows[r3].indices.length) {
+                var itemIdx = rows[r3].indices[c];
+                colInfo.indices.push(itemIdx);
+                if (infos[itemIdx].left < colInfo.left) colInfo.left = infos[itemIdx].left;
+                if (infos[itemIdx].right > colInfo.right) colInfo.right = infos[itemIdx].right;
+            }
+        }
+        colInfo.centerX = (colInfo.left + colInfo.right) / 2;
+        columns.push(colInfo);
+    }
+
+    return { rows: rows, columns: columns, infos: infos, orderedItems: ordered };
+}
+
+function applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment) {
+    tf.textRange.characterAttributes.size = fontSize;
+    try {
+        var resolved = getFontFullName(fontFamily, !!fontBold);
+        try {
+            tf.textRange.characterAttributes.textFont = app.textFonts.getByName(resolved);
+        } catch (e) {
+            try { tf.textRange.characterAttributes.textFont = app.textFonts.getByName(fontFamily); } catch (e2) { }
+        }
+    } catch (e) { }
+    try {
+        var clr = new RGBColor();
+        clr.red = parseInt(fontColor.substring(1, 3), 16);
+        clr.green = parseInt(fontColor.substring(3, 5), 16);
+        clr.blue = parseInt(fontColor.substring(5, 7), 16);
+        tf.textRange.characterAttributes.fillColor = clr;
+    } catch (e) { }
+    var just = Justification.CENTER;
+    if (alignment === "LEFT") just = Justification.LEFT;
+    else if (alignment === "RIGHT") just = Justification.RIGHT;
+    tf.textRange.paragraphAttributes.justification = just;
+}
+
+function addTextGrid(direction, defaultText, fontFamily, fontSize, fontBold, fontColor, alignment, distance, order, reverseOrder) {
+    if (app.documents.length === 0) return "Error: No document open.";
+
+    var doc = app.activeDocument;
+    var selection = doc.selection;
+
+    if (!selection || selection.length === 0) {
+        return "Error: Please select items to create text grid around.";
+    }
+
+    // Filter out TextFrames — only use non-text items as grid
+    var gridItems = [];
+    for (var i = 0; i < selection.length; i++) {
+        if (selection[i].typename !== "TextFrame") {
+            gridItems.push(selection[i]);
+        }
+    }
+    if (gridItems.length === 0) {
+        return "Error: No non-text items selected to form a grid.";
+    }
+
+    var grid = detectGrid(gridItems, order || "vertical", !!reverseOrder);
+    if (!grid || grid.rows.length === 0) {
+        return "Error: Could not detect grid structure.";
+    }
+
+    var distancePt = mmToPoints(distance);
+    var dir = direction || "bottom";
+    var textFrames = [];
+
+    if (dir === "top") {
+        var topRow = grid.rows[0];
+        for (var c = 0; c < grid.columns.length; c++) {
+            var col = grid.columns[c];
+            var tf = doc.textFrames.add();
+            tf.contents = defaultText;
+            tf.left = col.centerX;
+            tf.top = topRow.top + distancePt;
+            applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf);
+        }
+    } else if (dir === "bottom") {
+        var bottomRow = grid.rows[grid.rows.length - 1];
+        for (var c2 = 0; c2 < grid.columns.length; c2++) {
+            var col2 = grid.columns[c2];
+            var tf2 = doc.textFrames.add();
+            tf2.contents = defaultText;
+            tf2.left = col2.centerX;
+            tf2.top = bottomRow.bottom - distancePt;
+            applyTextStyle(tf2, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf2);
+        }
+    } else if (dir === "left") {
+        for (var r = 0; r < grid.rows.length; r++) {
+            var row = grid.rows[r];
+            var tf3 = doc.textFrames.add();
+            tf3.contents = defaultText;
+            tf3.left = grid.columns[0].left - distancePt;
+            tf3.top = row.centerY;
+            applyTextStyle(tf3, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf3);
+        }
+    } else if (dir === "right") {
+        for (var r2 = 0; r2 < grid.rows.length; r2++) {
+            var row2 = grid.rows[r2];
+            var tf4 = doc.textFrames.add();
+            tf4.contents = defaultText;
+            tf4.left = grid.columns[grid.columns.length - 1].right + distancePt;
+            tf4.top = row2.centerY;
+            applyTextStyle(tf4, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf4);
+        }
+    }
+
+    return "Success|" + textFrames.length;
+}
+
+function alignTextGrid(direction, fontFamily, fontSize, fontBold, fontColor, alignment, distance, order, reverseOrder) {
+    if (app.documents.length === 0) return "Error: No document open.";
+
+    var doc = app.activeDocument;
+    var selection = doc.selection;
+
+    if (!selection || selection.length === 0) {
+        return "Error: Please select text frames and grid items.";
+    }
+
+    // Separate text frames from non-text items
+    var textFrames = [];
+    var gridItems = [];
+    for (var i = 0; i < selection.length; i++) {
+        if (selection[i].typename === "TextFrame") {
+            textFrames.push(selection[i]);
+        } else {
+            gridItems.push(selection[i]);
+        }
+    }
+
+    if (gridItems.length === 0) {
+        return "Error: No grid items (non-text) selected.";
+    }
+    if (textFrames.length === 0) {
+        return "Error: No text frames selected.";
+    }
+
+    var grid = detectGrid(gridItems, order || "vertical", !!reverseOrder);
+    if (!grid || grid.rows.length === 0) {
+        return "Error: Could not detect grid structure.";
+    }
+
+    var distancePt = mmToPoints(distance);
+    var dir = direction || "bottom";
+
+    // Compute target positions
+    var targets = [];
+    if (dir === "top") {
+        var topRow = grid.rows[0];
+        for (var c = 0; c < grid.columns.length; c++) {
+            targets.push({ x: grid.columns[c].centerX, y: topRow.top + distancePt });
+        }
+    } else if (dir === "bottom") {
+        var bottomRow = grid.rows[grid.rows.length - 1];
+        for (var c2 = 0; c2 < grid.columns.length; c2++) {
+            targets.push({ x: grid.columns[c2].centerX, y: bottomRow.bottom - distancePt });
+        }
+    } else if (dir === "left") {
+        for (var r = 0; r < grid.rows.length; r++) {
+            targets.push({ x: grid.columns[0].left - distancePt, y: grid.rows[r].centerY });
+        }
+    } else if (dir === "right") {
+        for (var r2 = 0; r2 < grid.rows.length; r2++) {
+            targets.push({ x: grid.columns[grid.columns.length - 1].right + distancePt, y: grid.rows[r2].centerY });
+        }
+    }
+
+    // Sort text frames to match target order
+    var sortedTFs = [];
+    for (var t = 0; t < textFrames.length; t++) sortedTFs.push(textFrames[t]);
+
+    if (dir === "top" || dir === "bottom") {
+        sortedTFs.sort(function (a, b) { return a.left - b.left; });
+    } else {
+        sortedTFs.sort(function (a, b) { return b.top - a.top; });
+    }
+
+    // Match by index and reposition
+    var count = Math.min(sortedTFs.length, targets.length);
+    for (var m = 0; m < count; m++) {
+        var tf = sortedTFs[m];
+        var target = targets[m];
+        tf.left = target.x;
+        tf.top = target.y;
+        applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment);
+    }
+
+    return "Success|" + count;
+}

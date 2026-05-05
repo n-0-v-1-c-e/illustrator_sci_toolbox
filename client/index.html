@@ -257,6 +257,7 @@
             <div class="tab" data-target="panel-distribute" data-hash="distribute">Spacing Set</div>
             <div class="tab" data-target="panel-swap" data-hash="swap">Swap</div>
             <div class="tab" data-target="panel-labels" data-hash="labels">Image Labels</div>
+            <div class="tab" data-target="panel-textgrid" data-hash="textgrid">Text Grid</div>
             <div class="tab" data-target="panel-border" data-hash="border">Add Border</div>
             <div class="tab" data-target="panel-about" data-hash="about">About</div>
         </div>
@@ -489,6 +490,71 @@
                         Labels</button>
                 </div>
             </div>
+            <!-- Text Grid Panel -->
+            <div class="panel" id="panel-textgrid">
+                <div class="grid">
+                    <div class="input-group">
+                        <label>Direction:</label>
+                        <select id="textgrid-direction">
+                            <option value="top">Top</option>
+                            <option value="bottom" selected>Bottom</option>
+                            <option value="left">Left</option>
+                            <option value="right">Right</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Default Text:</label>
+                        <input type="text" id="textgrid-default-text" value="default">
+                    </div>
+                    <div class="input-group">
+                        <label>Font Family:</label>
+                        <select id="textgrid-font-family">
+                            <option value="ArialMT">Arial</option>
+                            <option value="TimesNewRomanPSMT" selected>Times New Roman</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Font Size (pt):</label>
+                        <input type="number" id="textgrid-font-size" value="8" min="1">
+                    </div>
+                    <div class="input-group">
+                        <label>Bold:</label>
+                        <input type="checkbox" id="textgrid-font-bold">
+                    </div>
+                    <div class="input-group">
+                        <label>Font Color:</label>
+                        <input type="color" id="textgrid-font-color" value="#000000">
+                    </div>
+                    <div class="input-group">
+                        <label>Alignment:</label>
+                        <select id="textgrid-alignment">
+                            <option value="LEFT">Left</option>
+                            <option value="CENTER" selected>Center</option>
+                            <option value="RIGHT">Right</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Distance (mm):</label>
+                        <input type="number" id="textgrid-distance" value="3" min="0" step="0.5">
+                    </div>
+                    <div class="input-group">
+                        <label>Order:</label>
+                        <select id="textgrid-order">
+                            <option value="stacking">stacking order</option>
+                            <option value="horizontal">horizontal order</option>
+                            <option value="vertical" selected>vertical order</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Reverse order</label>
+                        <input type="checkbox" id="textgrid-reverse-order">
+                    </div>
+                </div>
+                <div class="toolbar">
+                    <button class="btn btn-primary" id="textgrid-add-button">Add Text Grid</button>
+                    <button class="btn" id="textgrid-align-button">Align Text Grid</button>
+                </div>
+            </div>
             <!-- Size Formater Panel -->
             <div class="panel" id="panel-size">
                 <div class="grid">
@@ -565,7 +631,17 @@
                 fontColor: "#000000",
                 labelsOrder: "vertical",
                 labelsReverseOrder: false,
-                autoUpdateIndex: true
+                autoUpdateIndex: true,
+                textgridDirection: "bottom",
+                textgridDefaultText: "default",
+                textgridFontFamily: "TimesNewRomanPSMT",
+                textgridFontSize: 8,
+                textgridFontBold: false,
+                textgridFontColor: "#000000",
+                textgridAlignment: "CENTER",
+                textgridDistance: 3,
+                textgridOrder: "vertical",
+                textgridReverseOrder: false
             },
 
             // 保存设置到localStorage
@@ -581,7 +657,17 @@
                         fontColor: document.getElementById('font-color').value,
                         labelsOrder: document.getElementById('labels-order').value,
                         labelsReverseOrder: document.getElementById('labels-reverse-order').checked,
-                        autoUpdateIndex: document.getElementById('auto-update-index').checked
+                        autoUpdateIndex: document.getElementById('auto-update-index').checked,
+                        textgridDirection: document.getElementById('textgrid-direction').value,
+                        textgridDefaultText: document.getElementById('textgrid-default-text').value,
+                        textgridFontFamily: document.getElementById('textgrid-font-family').value,
+                        textgridFontSize: parseFloat(document.getElementById('textgrid-font-size').value),
+                        textgridFontBold: document.getElementById('textgrid-font-bold').checked,
+                        textgridFontColor: document.getElementById('textgrid-font-color').value,
+                        textgridAlignment: document.getElementById('textgrid-alignment').value,
+                        textgridDistance: parseFloat(document.getElementById('textgrid-distance').value),
+                        textgridOrder: document.getElementById('textgrid-order').value,
+                        textgridReverseOrder: document.getElementById('textgrid-reverse-order').checked
                     };
                     localStorage.setItem('illustrator_sci_plugin_settings', JSON.stringify(settings));
                 } catch (e) {
@@ -608,6 +694,18 @@
                         document.getElementById('labels-reverse-order').checked = settings.labelsReverseOrder || this.defaults.labelsReverseOrder;
                         document.getElementById('auto-update-index').checked = settings.autoUpdateIndex !== undefined ? settings.autoUpdateIndex : this.defaults.autoUpdateIndex;
 
+                        // Text Grid settings
+                        document.getElementById('textgrid-direction').value = settings.textgridDirection || this.defaults.textgridDirection;
+                        document.getElementById('textgrid-default-text').value = settings.textgridDefaultText !== undefined ? settings.textgridDefaultText : this.defaults.textgridDefaultText;
+                        document.getElementById('textgrid-font-family').value = settings.textgridFontFamily || this.defaults.textgridFontFamily;
+                        document.getElementById('textgrid-font-size').value = settings.textgridFontSize || this.defaults.textgridFontSize;
+                        document.getElementById('textgrid-font-bold').checked = settings.textgridFontBold !== undefined ? settings.textgridFontBold : this.defaults.textgridFontBold;
+                        document.getElementById('textgrid-font-color').value = settings.textgridFontColor || this.defaults.textgridFontColor;
+                        document.getElementById('textgrid-alignment').value = settings.textgridAlignment || this.defaults.textgridAlignment;
+                        document.getElementById('textgrid-distance').value = settings.textgridDistance !== undefined ? settings.textgridDistance : this.defaults.textgridDistance;
+                        document.getElementById('textgrid-order').value = settings.textgridOrder || this.defaults.textgridOrder;
+                        document.getElementById('textgrid-reverse-order').checked = settings.textgridReverseOrder || this.defaults.textgridReverseOrder;
+
                         console.log('Settings loaded successfully');
                     }
                 } catch (e) {
@@ -628,6 +726,16 @@
                 document.getElementById('labels-order').value = this.defaults.labelsOrder;
                 document.getElementById('labels-reverse-order').checked = this.defaults.labelsReverseOrder;
                 document.getElementById('auto-update-index').checked = this.defaults.autoUpdateIndex;
+                document.getElementById('textgrid-direction').value = this.defaults.textgridDirection;
+                document.getElementById('textgrid-default-text').value = this.defaults.textgridDefaultText;
+                document.getElementById('textgrid-font-family').value = this.defaults.textgridFontFamily;
+                document.getElementById('textgrid-font-size').value = this.defaults.textgridFontSize;
+                document.getElementById('textgrid-font-bold').checked = this.defaults.textgridFontBold;
+                document.getElementById('textgrid-font-color').value = this.defaults.textgridFontColor;
+                document.getElementById('textgrid-alignment').value = this.defaults.textgridAlignment;
+                document.getElementById('textgrid-distance').value = this.defaults.textgridDistance;
+                document.getElementById('textgrid-order').value = this.defaults.textgridOrder;
+                document.getElementById('textgrid-reverse-order').checked = this.defaults.textgridReverseOrder;
             },
 
             // 初始化设置管理
@@ -647,7 +755,11 @@
                 var settingsInputs = [
                     'font-family', 'font-size', 'font-bold', 'label-offset-x', 'label-offset-y',
                     'label-template', 'font-color',
-                    'labels-order', 'labels-reverse-order', 'auto-update-index'
+                    'labels-order', 'labels-reverse-order', 'auto-update-index',
+                    'textgrid-direction', 'textgrid-default-text', 'textgrid-font-family',
+                    'textgrid-font-size', 'textgrid-font-bold', 'textgrid-font-color',
+                    'textgrid-alignment', 'textgrid-distance', 'textgrid-order',
+                    'textgrid-reverse-order'
                 ];
 
                 settingsInputs.forEach(function (id) {
@@ -686,6 +798,7 @@
                 if (hash === 'arrange') target = 'panel-arrange';
                 else if (hash === 'distribute') target = 'panel-distribute';
                 else if (hash === 'labels') target = 'panel-labels';
+                else if (hash === 'textgrid') target = 'panel-textgrid';
                 else if (hash === 'size') target = 'panel-size';
                 else if (hash === 'border') target = 'panel-border';
                 else if (hash === 'swap') target = 'panel-swap';
