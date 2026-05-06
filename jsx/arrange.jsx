@@ -53,7 +53,14 @@ function getVisibleBounds(o) {
         }
         // 组被剪切
         if (o.clipped) {
-            // 在子项中寻找 clipping path
+            // First try: for clipped groups, visibleBounds often matches the clip area
+            var grpVB = o.visibleBounds;
+            var grpGB = o.geometricBounds;
+            if (grpVB && grpGB && (grpVB[2] - grpVB[0]) < (grpGB[2] - grpGB[0]) - 0.1) {
+                bounds = grpVB;
+                return bounds;
+            }
+            // Fallback: find clipping path among children
             for (var i = 0; i < o.pageItems.length; i++) {
                 curItem = o.pageItems[i];
                 if (curItem.clipping) {
@@ -135,6 +142,40 @@ function getVisibleInfo(item) {
         height: height,
         bounds: vb
     };
+}
+
+// 递归查找组内的 RasterItem，返回其 bounds
+function findRasterBounds(groupItem) {
+    for (var i = 0; i < groupItem.pageItems.length; i++) {
+        var child = groupItem.pageItems[i];
+        if (child.typename === "RasterItem") {
+            return child.geometricBounds;
+        }
+        if (child.typename === "GroupItem") {
+            var sub = findRasterBounds(child);
+            if (sub) return sub;
+        }
+    }
+    return null;
+}
+
+// 返回对象的"内容区域"信息，优先使用组内图片的实际边界
+function getContentInfo(item) {
+    if (item.typename === "GroupItem") {
+        var rasterBounds = findRasterBounds(item);
+        if (rasterBounds) {
+            var left = rasterBounds[0];
+            var top = rasterBounds[1];
+            var right = rasterBounds[2];
+            var bottom = rasterBounds[3];
+            return {
+                left: left, top: top, right: right, bottom: bottom,
+                width: right - left, height: top - bottom,
+                bounds: rasterBounds
+            };
+        }
+    }
+    return getVisibleInfo(item);
 }
 
 // 获取对象所在画板索引（通过对象可视边界中心点命中 artboardRect）
@@ -1348,5 +1389,653 @@ function updateLabelOffsets(offsetX, offsetY, sessionId) {
             }
         } catch (e) { }
     }
+    return "Success";
+}
+
+function detectGrid(items, order, reverseOrder) {
+    var ordered = getOrderedSelection(items, order || "stacking", !!reverseOrder);
+    var n = ordered.length;
+    if (n === 0) return null;
+
+    var infos = [];
+    for (var i = 0; i < n; i++) {
+        infos.push(getContentInfo(ordered[i]));
+    }
+
+    // Sort indices by Y (top descending), then X (left ascending)
+    var indices = [];
+    for (var j = 0; j < n; j++) indices.push(j);
+    indices.sort(function (a, b) {
+        var cyA = (infos[a].top + infos[a].bottom) / 2;
+        var cyB = (infos[b].top + infos[b].bottom) / 2;
+        if (cyA > cyB) return -1;
+        if (cyA < cyB) return 1;
+        if (infos[a].left < infos[b].left) return -1;
+        if (infos[a].left > infos[b].left) return 1;
+        return 0;
+    });
+
+    // Cluster into rows by Y proximity
+    var rows = [];
+    var currentRow = { indices: [], top: -Infinity, bottom: Infinity };
+    for (var k = 0; k < indices.length; k++) {
+        var idx = indices[k];
+        var info = infos[idx];
+        var centerY = (info.top + info.bottom) / 2;
+
+        if (currentRow.indices.length === 0) {
+            currentRow.indices.push(idx);
+            currentRow.top = info.top;
+            currentRow.bottom = info.bottom;
+        } else {
+            var rowCenterY = (currentRow.top + currentRow.bottom) / 2;
+            var rowHeight = currentRow.top - currentRow.bottom;
+            var tolerance = rowHeight * 0.5;
+            if (Math.abs(centerY - rowCenterY) <= tolerance) {
+                currentRow.indices.push(idx);
+                if (info.top > currentRow.top) currentRow.top = info.top;
+                if (info.bottom < currentRow.bottom) currentRow.bottom = info.bottom;
+            } else {
+                currentRow.centerY = (currentRow.top + currentRow.bottom) / 2;
+                rows.push(currentRow);
+                currentRow = { indices: [idx], top: info.top, bottom: info.bottom };
+            }
+        }
+    }
+    if (currentRow.indices.length > 0) {
+        currentRow.centerY = (currentRow.top + currentRow.bottom) / 2;
+        rows.push(currentRow);
+    }
+
+    // Sort each row's items by X (left to right)
+    for (var r = 0; r < rows.length; r++) {
+        rows[r].indices.sort(function (a, b) {
+            return infos[a].left - infos[b].left;
+        });
+    }
+
+    // Determine columns
+    var maxCols = 0;
+    for (var r2 = 0; r2 < rows.length; r2++) {
+        if (rows[r2].indices.length > maxCols) maxCols = rows[r2].indices.length;
+    }
+
+    var columns = [];
+    for (var c = 0; c < maxCols; c++) {
+        var colInfo = { left: Infinity, right: -Infinity, indices: [] };
+        for (var r3 = 0; r3 < rows.length; r3++) {
+            if (c < rows[r3].indices.length) {
+                var itemIdx = rows[r3].indices[c];
+                colInfo.indices.push(itemIdx);
+                if (infos[itemIdx].left < colInfo.left) colInfo.left = infos[itemIdx].left;
+                if (infos[itemIdx].right > colInfo.right) colInfo.right = infos[itemIdx].right;
+            }
+        }
+        colInfo.centerX = (colInfo.left + colInfo.right) / 2;
+        columns.push(colInfo);
+    }
+
+    return { rows: rows, columns: columns, infos: infos, orderedItems: ordered };
+}
+
+function applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment) {
+    tf.textRange.characterAttributes.size = fontSize;
+    try {
+        var resolved = getFontFullName(fontFamily, !!fontBold);
+        try {
+            tf.textRange.characterAttributes.textFont = app.textFonts.getByName(resolved);
+        } catch (e) {
+            try { tf.textRange.characterAttributes.textFont = app.textFonts.getByName(fontFamily); } catch (e2) { }
+        }
+    } catch (e) { }
+    try {
+        var clr = new RGBColor();
+        clr.red = parseInt(fontColor.substring(1, 3), 16);
+        clr.green = parseInt(fontColor.substring(3, 5), 16);
+        clr.blue = parseInt(fontColor.substring(5, 7), 16);
+        tf.textRange.characterAttributes.fillColor = clr;
+    } catch (e) { }
+    var just = Justification.CENTER;
+    if (alignment === "LEFT") just = Justification.LEFT;
+    else if (alignment === "RIGHT") just = Justification.RIGHT;
+    tf.textRange.paragraphAttributes.justification = just;
+}
+
+function addTextGrid(direction, defaultText, fontFamily, fontSize, fontBold, fontColor, alignment, distance, order, reverseOrder) {
+    if (app.documents.length === 0) return "Error: No document open.";
+
+    var doc = app.activeDocument;
+    var selection = doc.selection;
+
+    if (!selection || selection.length === 0) {
+        return "Error: Please select items to create text grid around.";
+    }
+
+    // Filter out TextFrames — prefer RasterItems and GroupItems, skip standalone PathItems (likely borders)
+    var gridItems = [];
+    var hasContentItems = false;
+    for (var i = 0; i < selection.length; i++) {
+        if (selection[i].typename === "TextFrame") continue;
+        if (selection[i].typename === "RasterItem" || selection[i].typename === "GroupItem") {
+            gridItems.push(selection[i]);
+            hasContentItems = true;
+        } else if (selection[i].typename !== "PathItem" && selection[i].typename !== "CompoundPathItem") {
+            gridItems.push(selection[i]);
+        }
+    }
+    // Fallback: if no content items found, include all non-TextFrame items
+    if (!hasContentItems && gridItems.length === 0) {
+        for (var j = 0; j < selection.length; j++) {
+            if (selection[j].typename !== "TextFrame") {
+                gridItems.push(selection[j]);
+            }
+        }
+    }
+    if (gridItems.length === 0) {
+        return "Error: No non-text items selected to form a grid.";
+    }
+
+    var grid = detectGrid(gridItems, order || "vertical", !!reverseOrder);
+    if (!grid || grid.rows.length === 0) {
+        return "Error: Could not detect grid structure.";
+    }
+
+    var distancePt = mmToPoints(distance);
+    var dir = direction || "bottom";
+    var textFrames = [];
+
+    if (dir === "top") {
+        var topRow = grid.rows[0];
+        for (var c = 0; c < grid.columns.length; c++) {
+            var col = grid.columns[c];
+            var tf = doc.textFrames.add();
+            tf.contents = defaultText;
+            tf.left = col.centerX;
+            tf.top = topRow.top + distancePt;
+            applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf);
+        }
+    } else if (dir === "bottom") {
+        var bottomRow = grid.rows[grid.rows.length - 1];
+        for (var c2 = 0; c2 < grid.columns.length; c2++) {
+            var col2 = grid.columns[c2];
+            var tf2 = doc.textFrames.add();
+            tf2.contents = defaultText;
+            tf2.left = col2.centerX;
+            tf2.top = bottomRow.bottom - distancePt;
+            applyTextStyle(tf2, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf2);
+        }
+    } else if (dir === "left") {
+        for (var r = 0; r < grid.rows.length; r++) {
+            var row = grid.rows[r];
+            var tf3 = doc.textFrames.add();
+            tf3.contents = defaultText;
+            tf3.left = grid.columns[0].left - distancePt;
+            tf3.top = row.centerY;
+            applyTextStyle(tf3, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf3);
+        }
+    } else if (dir === "right") {
+        for (var r2 = 0; r2 < grid.rows.length; r2++) {
+            var row2 = grid.rows[r2];
+            var tf4 = doc.textFrames.add();
+            tf4.contents = defaultText;
+            tf4.left = grid.columns[grid.columns.length - 1].right + distancePt;
+            tf4.top = row2.centerY;
+            applyTextStyle(tf4, fontFamily, fontSize, fontBold, fontColor, alignment);
+            textFrames.push(tf4);
+        }
+    }
+
+    return "Success|" + textFrames.length;
+}
+
+function alignTextGrid(direction, fontFamily, fontSize, fontBold, fontColor, alignment, distance, order, reverseOrder) {
+    if (app.documents.length === 0) return "Error: No document open.";
+
+    var doc = app.activeDocument;
+    var selection = doc.selection;
+
+    if (!selection || selection.length === 0) {
+        return "Error: Please select text frames and grid items.";
+    }
+
+    // Separate text frames from non-text items, skip standalone PathItems (likely borders)
+    var textFrames = [];
+    var gridItems = [];
+    var hasContentItems = false;
+    for (var i = 0; i < selection.length; i++) {
+        if (selection[i].typename === "TextFrame") {
+            textFrames.push(selection[i]);
+        } else if (selection[i].typename === "RasterItem" || selection[i].typename === "GroupItem") {
+            gridItems.push(selection[i]);
+            hasContentItems = true;
+        } else if (selection[i].typename !== "PathItem" && selection[i].typename !== "CompoundPathItem") {
+            gridItems.push(selection[i]);
+        }
+    }
+    // Fallback: if no content items found, include PathItems as grid items
+    if (!hasContentItems && gridItems.length === 0) {
+        for (var j = 0; j < selection.length; j++) {
+            if (selection[j].typename !== "TextFrame") {
+                gridItems.push(selection[j]);
+            }
+        }
+    }
+
+    if (gridItems.length === 0) {
+        return "Error: No grid items (non-text) selected.";
+    }
+    if (textFrames.length === 0) {
+        return "Error: No text frames selected.";
+    }
+
+    var grid = detectGrid(gridItems, order || "vertical", !!reverseOrder);
+    if (!grid || grid.rows.length === 0) {
+        return "Error: Could not detect grid structure.";
+    }
+
+    var distancePt = mmToPoints(distance);
+    var dir = direction || "bottom";
+
+    // Compute target positions
+    var targets = [];
+    if (dir === "top") {
+        var topRow = grid.rows[0];
+        for (var c = 0; c < grid.columns.length; c++) {
+            targets.push({ x: grid.columns[c].centerX, y: topRow.top + distancePt });
+        }
+    } else if (dir === "bottom") {
+        var bottomRow = grid.rows[grid.rows.length - 1];
+        for (var c2 = 0; c2 < grid.columns.length; c2++) {
+            targets.push({ x: grid.columns[c2].centerX, y: bottomRow.bottom - distancePt });
+        }
+    } else if (dir === "left") {
+        for (var r = 0; r < grid.rows.length; r++) {
+            targets.push({ x: grid.columns[0].left - distancePt, y: grid.rows[r].centerY });
+        }
+    } else if (dir === "right") {
+        for (var r2 = 0; r2 < grid.rows.length; r2++) {
+            targets.push({ x: grid.columns[grid.columns.length - 1].right + distancePt, y: grid.rows[r2].centerY });
+        }
+    }
+
+    // Sort text frames to match target order
+    var sortedTFs = [];
+    for (var t = 0; t < textFrames.length; t++) sortedTFs.push(textFrames[t]);
+
+    if (dir === "top" || dir === "bottom") {
+        sortedTFs.sort(function (a, b) { return a.left - b.left; });
+    } else {
+        sortedTFs.sort(function (a, b) { return b.top - a.top; });
+    }
+
+    // Match by index and reposition
+    var count = Math.min(sortedTFs.length, targets.length);
+    for (var m = 0; m < count; m++) {
+        var tf = sortedTFs[m];
+        var target = targets[m];
+        tf.left = target.x;
+        tf.top = target.y;
+        applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment);
+    }
+
+    return "Success|" + count;
+}
+// --- Grid Arrange (from grid-arrange branch) ---
+
+function detectGridBasic(selection) {
+    var items = [];
+    for (var i = 0; i < selection.length; i++) {
+        var info = getVisibleInfo(selection[i]);
+        items.push({
+            item: selection[i],
+            cx: (info.left + info.right) / 2,
+            cy: (info.top + info.bottom) / 2,
+            info: info
+        });
+    }
+
+    items.sort(function (a, b) { return b.cy - a.cy; });
+
+    var avgH = 0;
+    for (var i = 0; i < items.length; i++) {
+        avgH += items[i].info.height;
+    }
+    avgH = avgH / items.length;
+    var thresholdY = avgH * 0.5;
+    if (thresholdY < 1) thresholdY = 1;
+
+    var rows = [];
+    var currentRow = [items[0]];
+    var rowMeanCy = items[0].cy;
+
+    for (var i = 1; i < items.length; i++) {
+        if (Math.abs(items[i].cy - rowMeanCy) <= thresholdY) {
+            currentRow.push(items[i]);
+            rowMeanCy = 0;
+            for (var j = 0; j < currentRow.length; j++) rowMeanCy += currentRow[j].cy;
+            rowMeanCy = rowMeanCy / currentRow.length;
+        } else {
+            currentRow.sort(function (a, b) { return a.cx - b.cx; });
+            rows.push(currentRow);
+            currentRow = [items[i]];
+            rowMeanCy = items[i].cy;
+        }
+    }
+    currentRow.sort(function (a, b) { return a.cx - b.cx; });
+    rows.push(currentRow);
+
+    return rows;
+}
+
+function gridArrange(rowGap, colGap) {
+    if (app.documents.length === 0) return;
+
+    var doc = app.activeDocument;
+    var selection = doc.selection;
+
+    if (!selection || selection.length === 0) {
+        alert("Please select items to arrange");
+        return;
+    }
+    if (selection.length < 2) {
+        alert("Grid Arrange requires at least 2 items");
+        return;
+    }
+
+    var rows = detectGridBasic(selection);
+    var numRows = rows.length;
+    var numCols = 0;
+    for (var r = 0; r < numRows; r++) {
+        if (rows[r].length > numCols) numCols = rows[r].length;
+    }
+
+    var rowGapPt = mmToPoints(rowGap);
+    var colGapPt = mmToPoints(colGap);
+
+    var startX = rows[0][0].info.left;
+    var startY = rows[0][0].info.top;
+
+    var colWidths = [];
+    for (var c = 0; c < numCols; c++) {
+        colWidths[c] = 0;
+        for (var r = 0; r < numRows; r++) {
+            if (c < rows[r].length && rows[r][c].info.width > colWidths[c]) {
+                colWidths[c] = rows[r][c].info.width;
+            }
+        }
+    }
+
+    var rowHeights = [];
+    for (var r = 0; r < numRows; r++) {
+        rowHeights[r] = 0;
+        for (var c = 0; c < rows[r].length; c++) {
+            if (rows[r][c].info.height > rowHeights[r]) {
+                rowHeights[r] = rows[r][c].info.height;
+            }
+        }
+    }
+
+    var currentY = startY;
+    for (var r = 0; r < numRows; r++) {
+        var currentX = startX;
+        for (var c = 0; c < rows[r].length; c++) {
+            moveItemTopLeftTo(rows[r][c].item, currentX, currentY);
+            currentX += colWidths[c] + colGapPt;
+        }
+        currentY -= rowHeights[r] + rowGapPt;
+    }
+}
+
+// --- Array Clip (from array-clip branch) ---
+
+function formatClipRect(color, strokeWidth) {
+    if (app.documents.length === 0) return "Error: No document open.";
+    var doc = app.activeDocument;
+    var sel = doc.selection;
+    if (!sel || sel.length === 0) return "Error: Please select rectangle shapes.";
+
+    var r = 0, g = 0, b = 0;
+    try {
+        if (typeof color === 'string' && color.charAt(0) === '#' && color.length >= 7) {
+            r = parseInt(color.substr(1, 2), 16) || 0;
+            g = parseInt(color.substr(3, 2), 16) || 0;
+            b = parseInt(color.substr(5, 2), 16) || 0;
+        }
+    } catch (e) {}
+    var rgbColor = new RGBColor();
+    rgbColor.red = r;
+    rgbColor.green = g;
+    rgbColor.blue = b;
+
+    var w = (typeof strokeWidth === 'number') ? strokeWidth : 1;
+
+    var count = 0;
+    for (var i = 0; i < sel.length; i++) {
+        if (sel[i].typename === "PathItem" || sel[i].typename === "CompoundPathItem") {
+            sel[i].filled = false;
+            sel[i].stroked = true;
+            sel[i].strokeColor = rgbColor;
+            sel[i].strokeWidth = w;
+            try { sel[i].strokeDashes = []; } catch (e) {}
+            count++;
+        }
+    }
+    if (count === 0) return "Error: No PathItem shapes found. Draw rectangles with the Rectangle tool (M) first.";
+    return "Success";
+}
+
+function arrayClip(gapMm) {
+    if (app.documents.length === 0) return "Error: No document open.";
+    var doc = app.activeDocument;
+    var sel = doc.selection;
+    if (!sel || sel.length < 2) return "Error: Select at least 1 clip rectangle and 1 image.";
+
+    var images = [];
+    var clipRects = [];
+    for (var i = 0; i < sel.length; i++) {
+        if (sel[i].typename === "PathItem") clipRects.push(sel[i]);
+        else images.push(sel[i]);
+    }
+    if (images.length < 1) return "Error: No images found (non-PathItem objects required).";
+    if (clipRects.length < 1) return "Error: No clip rectangles found (PathItem objects required).";
+
+    var imgInfos = [];
+    for (var i = 0; i < images.length; i++) {
+        imgInfos.push(getVisibleInfo(images[i]));
+    }
+
+    var mode;
+    if (images.length === 1) {
+        mode = "column";
+    } else {
+        var minLeft = Infinity, maxLeft = -Infinity;
+        var minTop = Infinity, maxTop = -Infinity;
+        for (var i = 0; i < imgInfos.length; i++) {
+            if (imgInfos[i].left < minLeft) minLeft = imgInfos[i].left;
+            if (imgInfos[i].left > maxLeft) maxLeft = imgInfos[i].left;
+            if (imgInfos[i].top < minTop) minTop = imgInfos[i].top;
+            if (imgInfos[i].top > maxTop) maxTop = imgInfos[i].top;
+        }
+        mode = (maxTop - minTop > maxLeft - minLeft) ? "column" : "row";
+    }
+
+    var indices = [];
+    for (var i = 0; i < images.length; i++) indices.push(i);
+    if (mode === "column") {
+        indices.sort(function (a, b) { return imgInfos[b].top - imgInfos[a].top; });
+    } else {
+        indices.sort(function (a, b) { return imgInfos[a].left - imgInfos[b].left; });
+    }
+    var sortedImages = [], sortedInfos = [];
+    for (var i = 0; i < indices.length; i++) {
+        sortedImages.push(images[indices[i]]);
+        sortedInfos.push(imgInfos[indices[i]]);
+    }
+
+    var refW = sortedInfos[0].width, refH = sortedInfos[0].height;
+    for (var i = 1; i < sortedInfos.length; i++) {
+        if (Math.abs(sortedInfos[i].width - refW) > 1 || Math.abs(sortedInfos[i].height - refH) > 1) {
+            return "Error: All images must be the same size.";
+        }
+    }
+
+    var firstInfo = sortedInfos[0];
+    var overlappingRects = [];
+    for (var i = 0; i < clipRects.length; i++) {
+        var ri = getVisibleInfo(clipRects[i]);
+        if (ri.left < firstInfo.right && ri.right > firstInfo.left &&
+            ri.top > firstInfo.bottom && ri.bottom < firstInfo.top) {
+            overlappingRects.push(clipRects[i]);
+        }
+    }
+    if (overlappingRects.length === 0) return "Error: No clip rects overlap the first image.";
+
+    if (mode === "column") {
+        overlappingRects.sort(function (a, b) { return getVisibleInfo(a).left - getVisibleInfo(b).left; });
+    } else {
+        overlappingRects.sort(function (a, b) { return getVisibleInfo(b).top - getVisibleInfo(a).top; });
+    }
+
+    var rectOffsets = [];
+    for (var i = 0; i < overlappingRects.length; i++) {
+        var ri = getVisibleInfo(overlappingRects[i]);
+        rectOffsets.push({
+            dx: ri.left - firstInfo.left,
+            dy: ri.top - firstInfo.top,
+            w: ri.width,
+            h: ri.height
+        });
+    }
+
+    var gapPt = mmToPoints(gapMm);
+    var numImgs = sortedImages.length;
+    var numRects = overlappingRects.length;
+
+    var resultStartX, resultStartY;
+    if (mode === "column") {
+        var rightMost = -Infinity;
+        for (var i = 0; i < sortedInfos.length; i++) {
+            if (sortedInfos[i].right > rightMost) rightMost = sortedInfos[i].right;
+        }
+        resultStartX = rightMost + gapPt;
+        resultStartY = sortedInfos[0].top;
+    } else {
+        resultStartX = sortedInfos[0].left;
+        var bottomMost = Infinity;
+        for (var i = 0; i < sortedInfos.length; i++) {
+            if (sortedInfos[i].bottom < bottomMost) bottomMost = sortedInfos[i].bottom;
+        }
+        resultStartY = bottomMost - gapPt;
+    }
+
+    // Create clipping mask then rasterize to truly crop (remove hidden pixels)
+    var clipGroups = [];
+    for (var r = 0; r < numRects; r++) {
+        clipGroups[r] = [];
+        for (var im = 0; im < numImgs; im++) {
+            var off = rectOffsets[r];
+            var clipLeft = sortedInfos[im].left + off.dx;
+            var clipTop = sortedInfos[im].top + off.dy;
+
+            var clipPath = doc.pathItems.rectangle(clipTop, clipLeft, off.w, off.h);
+            clipPath.filled = false;
+            clipPath.stroked = false;
+            var dupImg = sortedImages[im].duplicate();
+
+            var grp = doc.groupItems.add();
+            dupImg.move(grp, ElementPlacement.PLACEATEND);
+            clipPath.move(grp, ElementPlacement.PLACEATBEGINNING);
+            clipPath.clipping = true;
+            grp.clipped = true;
+
+            // Scale group to target size FIRST, then rasterize at full resolution
+            if (mode === "column") {
+                scaleItemToVisibleHeight(grp, refH);
+            } else {
+                scaleItemToVisibleWidth(grp, refW);
+            }
+
+            var scaledInfo = getVisibleInfo(grp);
+            var clipBounds = [scaledInfo.left, scaledInfo.top, scaledInfo.right, scaledInfo.bottom];
+            var rasterItem = doc.rasterize(grp, clipBounds);
+            try { grp.remove(); } catch (e) {}
+
+            clipGroups[r][im] = rasterItem;
+        }
+    }
+
+    // Grid layout measured from rasters
+    var colWidths = [];
+    for (var r = 0; r < numRects; r++) {
+        var maxW = 0;
+        for (var im = 0; im < numImgs; im++) {
+            var gi = getVisibleInfo(clipGroups[r][im]);
+            if (gi.width > maxW) maxW = gi.width;
+        }
+        colWidths.push(maxW);
+    }
+    var rowHeights = [];
+    for (var im = 0; im < numImgs; im++) {
+        var maxH = 0;
+        for (var r = 0; r < numRects; r++) {
+            var gi = getVisibleInfo(clipGroups[r][im]);
+            if (gi.height > maxH) maxH = gi.height;
+        }
+        rowHeights.push(maxH);
+    }
+
+    // Position each clip at its grid cell
+    if (mode === "column") {
+        var cx = resultStartX;
+        for (var r = 0; r < numRects; r++) {
+            var cy = resultStartY;
+            for (var im = 0; im < numImgs; im++) {
+                moveItemTopLeftTo(clipGroups[r][im], cx, cy);
+                cy -= rowHeights[im] + gapPt;
+            }
+            cx += colWidths[r] + gapPt;
+        }
+    } else {
+        var cy = resultStartY;
+        for (var im = 0; im < numImgs; im++) {
+            var cx = resultStartX;
+            for (var r = 0; r < numRects; r++) {
+                moveItemTopLeftTo(clipGroups[r][im], cx, cy);
+                cx += colWidths[r] + gapPt;
+            }
+            cy -= rowHeights[im] + gapPt;
+        }
+    }
+
+    // Copy rects to non-first images, preserving each rect's style
+    var imageRects = [];
+    imageRects[0] = overlappingRects.slice();
+    for (var im = 1; im < numImgs; im++) {
+        imageRects[im] = [];
+        for (var r = 0; r < numRects; r++) {
+            var off = rectOffsets[r];
+            var rectLeft = sortedInfos[im].left + off.dx;
+            var rectTop = sortedInfos[im].top + off.dy;
+            var newRect = doc.pathItems.rectangle(rectTop, rectLeft, off.w, off.h);
+            newRect.filled = false;
+            newRect.stroked = true;
+            try { newRect.strokeColor = overlappingRects[r].strokeColor; } catch (e) {}
+            try { newRect.strokeWidth = overlappingRects[r].strokeWidth; } catch (e) {}
+            imageRects[im].push(newRect);
+        }
+    }
+
+    // Group each image with its rects
+    for (var im = 0; im < numImgs; im++) {
+        var grp = doc.groupItems.add();
+        sortedImages[im].move(grp, ElementPlacement.PLACEATEND);
+        for (var r = 0; r < imageRects[im].length; r++) {
+            imageRects[im][r].move(grp, ElementPlacement.PLACEATBEGINNING);
+        }
+    }
+
     return "Success";
 }

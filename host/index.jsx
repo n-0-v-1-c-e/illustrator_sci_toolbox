@@ -88,6 +88,35 @@ var addBorderButton = document.querySelector("#add-border-button");
 var borderDashInput = document.querySelector("#border-dash");
 var autoGroupBorderCheckbox = document.querySelector("#auto-group-border");
 
+// Text Grid UI Elements
+var textgridDirectionSelect = document.querySelector("#textgrid-direction");
+var textgridDefaultTextInput = document.querySelector("#textgrid-default-text");
+var textgridFontFamilySelect = document.querySelector("#textgrid-font-family");
+var textgridFontSizeInput = document.querySelector("#textgrid-font-size");
+var textgridFontBoldCheckbox = document.querySelector("#textgrid-font-bold");
+var textgridFontColorInput = document.querySelector("#textgrid-font-color");
+var textgridAlignmentSelect = document.querySelector("#textgrid-alignment");
+var textgridDistanceInput = document.querySelector("#textgrid-distance");
+var textgridOrderSelect = document.querySelector("#textgrid-order");
+var textgridReverseOrderCheckbox = document.querySelector("#textgrid-reverse-order");
+var textgridAddButton = document.querySelector("#textgrid-add-button");
+var textgridAlignButton = document.querySelector("#textgrid-align-button");
+
+// Grid Arrange UI Elements
+var gridRowGapInput = document.querySelector("#grid-row-gap");
+var gridColGapInput = document.querySelector("#grid-col-gap");
+var gridArrangeButton = document.querySelector("#grid-arrange-button");
+
+// Array Clip UI Elements
+var formatClipRectButton = document.querySelector("#format-clip-rect-button");
+var arrayClipButton = document.querySelector("#array-clip-button");
+var arrayClipGapInput = document.querySelector("#array-clip-gap");
+var clipRectPresetSelect = document.querySelector("#clip-rect-preset");
+var presetColorInput = document.querySelector("#preset-color");
+var presetWidthInput = document.querySelector("#preset-width");
+var addPresetButton = document.querySelector("#add-preset-button");
+var deletePresetButton = document.querySelector("#delete-preset-button");
+
 // Event Listeners
 arrangeButton.addEventListener("click", handleArrange);
 addLabelButton.addEventListener("click", handleAddLabel);
@@ -104,6 +133,16 @@ copySizeButton.addEventListener("click", handleCopySize);
 pasteSizeButton.addEventListener("click", handlePasteSize);
 
 addBorderButton.addEventListener("click", handleAddBorder);
+
+gridArrangeButton.addEventListener("click", handleGridArrange);
+
+formatClipRectButton.addEventListener("click", handleFormatClipRect);
+arrayClipButton.addEventListener("click", handleArrayClip);
+addPresetButton.addEventListener("click", handleAddPreset);
+deletePresetButton.addEventListener("click", handleDeletePreset);
+
+textgridAddButton.addEventListener("click", handleTextGridAdd);
+textgridAlignButton.addEventListener("click", handleTextGridAlign);
 
 distributeVerticalButton.addEventListener("click", () => handleDistributeSpacing("vertical"));
 distributeHorizontalButton.addEventListener("click", () => handleDistributeSpacing("horizontal"));
@@ -664,6 +703,67 @@ function handleLabelOffsetWheel(event) {
     handleLabelOffsetChange();
 }
 
+function handleTextGridAdd() {
+    var direction = textgridDirectionSelect.value || "bottom";
+    var defaultText = (textgridDefaultTextInput.value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\r");
+    var fontFamily = textgridFontFamilySelect.value || "TimesNewRomanPSMT";
+    var fontSize = parseFloat(textgridFontSizeInput.value) || 8;
+    var fontBold = !!(textgridFontBoldCheckbox && textgridFontBoldCheckbox.checked);
+    var fontColor = textgridFontColorInput.value || "#000000";
+    var alignment = textgridAlignmentSelect.value || "CENTER";
+    var distance = parseFloat(textgridDistanceInput.value);
+    if (isNaN(distance)) distance = 3;
+    var order = (textgridOrderSelect && textgridOrderSelect.value) || "vertical";
+    var revOrder = !!(textgridReverseOrderCheckbox && textgridReverseOrderCheckbox.checked);
+
+    csInterface.evalScript('$.evalFile("' + csInterface.getSystemPath(SystemPath.EXTENSION) + '/jsx/arrange.jsx")');
+    csInterface.evalScript(
+        'addTextGrid("' + direction + '","' + defaultText.replace(/"/g, '\\"') + '","' +
+        fontFamily + '",' + fontSize + ',' + fontBold + ',"' + fontColor + '","' +
+        alignment + '",' + distance + ',"' + order + '",' + revOrder + ')',
+        function (result) {
+            if (result === 'EvalScript error.') {
+                alert('Error executing the script');
+            } else if (result && result.indexOf("Error:") === 0) {
+                alert(result);
+            }
+            if (typeof PluginSettings !== 'undefined') {
+                PluginSettings.save();
+            }
+        }
+    );
+}
+
+function handleTextGridAlign() {
+    var direction = textgridDirectionSelect.value || "bottom";
+    var fontFamily = textgridFontFamilySelect.value || "TimesNewRomanPSMT";
+    var fontSize = parseFloat(textgridFontSizeInput.value) || 8;
+    var fontBold = !!(textgridFontBoldCheckbox && textgridFontBoldCheckbox.checked);
+    var fontColor = textgridFontColorInput.value || "#000000";
+    var alignment = textgridAlignmentSelect.value || "CENTER";
+    var distance = parseFloat(textgridDistanceInput.value);
+    if (isNaN(distance)) distance = 3;
+    var order = (textgridOrderSelect && textgridOrderSelect.value) || "vertical";
+    var revOrder = !!(textgridReverseOrderCheckbox && textgridReverseOrderCheckbox.checked);
+
+    csInterface.evalScript('$.evalFile("' + csInterface.getSystemPath(SystemPath.EXTENSION) + '/jsx/arrange.jsx")');
+    csInterface.evalScript(
+        'alignTextGrid("' + direction + '","' + fontFamily + '",' + fontSize + ',' +
+        fontBold + ',"' + fontColor + '","' + alignment + '",' + distance + ',"' +
+        order + '",' + revOrder + ')',
+        function (result) {
+            if (result === 'EvalScript error.') {
+                alert('Error executing the script');
+            } else if (result && result.indexOf("Error:") === 0) {
+                alert(result);
+            }
+            if (typeof PluginSettings !== 'undefined') {
+                PluginSettings.save();
+            }
+        }
+    );
+}
+
 function handleAddBorder() {
     console.log("Add Border button clicked");
     var color = borderColorInput.value;
@@ -682,3 +782,109 @@ function handleAddBorder() {
         }
     });
 }
+
+// --- Grid Arrange ---
+function handleGridArrange() {
+    var rowGap = parseFloat(gridRowGapInput.value);
+    if (isNaN(rowGap)) rowGap = 1;
+    if (rowGap < 0) rowGap = 0;
+    var colGap = parseFloat(gridColGapInput.value);
+    if (isNaN(colGap)) colGap = 1;
+    if (colGap < 0) colGap = 0;
+
+    csInterface.evalScript(`$.evalFile("${csInterface.getSystemPath(SystemPath.EXTENSION)}/jsx/arrange.jsx")`);
+    csInterface.evalScript(`gridArrange(${rowGap}, ${colGap})`, function (result) {
+        if (result === 'EvalScript error.') {
+            alert('Error executing the Grid Arrange script');
+        }
+    });
+}
+
+// --- Array Clip ---
+function loadPresets() {
+    var stored = window.localStorage.getItem("clipRectPresets");
+    if (stored) {
+        try { return JSON.parse(stored); } catch (e) {}
+    }
+    return [
+        { name: "Red 0.5pt", color: "#FF0000", width: 0.5 },
+        { name: "Blue 1pt", color: "#0000FF", width: 1 },
+        { name: "Black 0.75pt", color: "#000000", width: 0.75 }
+    ];
+}
+
+function savePresets(presets) {
+    window.localStorage.setItem("clipRectPresets", JSON.stringify(presets));
+}
+
+function populatePresetSelect() {
+    var presets = loadPresets();
+    clipRectPresetSelect.innerHTML = "";
+    for (var i = 0; i < presets.length; i++) {
+        var opt = document.createElement("option");
+        opt.value = i;
+        opt.textContent = presets[i].name;
+        clipRectPresetSelect.appendChild(opt);
+    }
+}
+
+function handleFormatClipRect() {
+    var presets = loadPresets();
+    var idx = parseInt(clipRectPresetSelect.value);
+    if (isNaN(idx) || idx < 0 || idx >= presets.length) {
+        alert("Please select a preset.");
+        return;
+    }
+    var preset = presets[idx];
+    var color = preset.color;
+    var width = preset.width;
+
+    csInterface.evalScript(`$.evalFile("${csInterface.getSystemPath(SystemPath.EXTENSION)}/jsx/arrange.jsx")`);
+    csInterface.evalScript(`formatClipRect("${color}", ${width})`, function (result) {
+        if (result && result.indexOf("Error:") === 0) {
+            alert(result);
+        }
+    });
+}
+
+function handleArrayClip() {
+    var gap = parseFloat(arrayClipGapInput.value);
+    if (isNaN(gap) || gap < 0) gap = 1;
+
+    csInterface.evalScript(`$.evalFile("${csInterface.getSystemPath(SystemPath.EXTENSION)}/jsx/arrange.jsx")`);
+    csInterface.evalScript(`arrayClip(${gap})`, function (result) {
+        if (result && result.indexOf("Error:") === 0) {
+            alert(result);
+        }
+    });
+}
+
+function handleAddPreset() {
+    var color = presetColorInput.value;
+    var width = parseFloat(presetWidthInput.value);
+    if (isNaN(width) || width <= 0) {
+        alert("Please enter a valid stroke width.");
+        return;
+    }
+    var name = color + " " + width + "pt";
+    var presets = loadPresets();
+    presets.push({ name: name, color: color, width: width });
+    savePresets(presets);
+    populatePresetSelect();
+    clipRectPresetSelect.value = presets.length - 1;
+}
+
+function handleDeletePreset() {
+    var idx = parseInt(clipRectPresetSelect.value);
+    if (isNaN(idx) || idx < 0) return;
+    var presets = loadPresets();
+    if (presets.length <= 1) {
+        alert("Cannot delete the last preset.");
+        return;
+    }
+    presets.splice(idx, 1);
+    savePresets(presets);
+    populatePresetSelect();
+}
+
+populatePresetSelect();
