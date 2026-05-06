@@ -1550,9 +1550,9 @@ function addTextGrid(direction, defaultText, fontFamily, fontSize, fontBold, fon
             var col = grid.columns[c];
             var tf = doc.textFrames.add();
             tf.contents = defaultText;
-            tf.left = col.centerX;
-            tf.top = topRow.top + distancePt;
             applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment);
+            tf.left = col.centerX - tf.width / 2;
+            tf.top = topRow.top + distancePt;
             textFrames.push(tf);
         }
     } else if (dir === "bottom") {
@@ -1561,9 +1561,9 @@ function addTextGrid(direction, defaultText, fontFamily, fontSize, fontBold, fon
             var col2 = grid.columns[c2];
             var tf2 = doc.textFrames.add();
             tf2.contents = defaultText;
-            tf2.left = col2.centerX;
-            tf2.top = bottomRow.bottom - distancePt;
             applyTextStyle(tf2, fontFamily, fontSize, fontBold, fontColor, alignment);
+            tf2.left = col2.centerX - tf2.width / 2;
+            tf2.top = bottomRow.bottom - distancePt;
             textFrames.push(tf2);
         }
     } else if (dir === "left") {
@@ -1571,9 +1571,9 @@ function addTextGrid(direction, defaultText, fontFamily, fontSize, fontBold, fon
             var row = grid.rows[r];
             var tf3 = doc.textFrames.add();
             tf3.contents = defaultText;
-            tf3.left = grid.columns[0].left - distancePt;
-            tf3.top = row.centerY;
             applyTextStyle(tf3, fontFamily, fontSize, fontBold, fontColor, alignment);
+            tf3.left = grid.columns[0].left - distancePt - tf3.width;
+            tf3.top = row.centerY + tf3.height / 2;
             textFrames.push(tf3);
         }
     } else if (dir === "right") {
@@ -1581,9 +1581,9 @@ function addTextGrid(direction, defaultText, fontFamily, fontSize, fontBold, fon
             var row2 = grid.rows[r2];
             var tf4 = doc.textFrames.add();
             tf4.contents = defaultText;
-            tf4.left = grid.columns[grid.columns.length - 1].right + distancePt;
-            tf4.top = row2.centerY;
             applyTextStyle(tf4, fontFamily, fontSize, fontBold, fontColor, alignment);
+            tf4.left = grid.columns[grid.columns.length - 1].right + distancePt;
+            tf4.top = row2.centerY + tf4.height / 2;
             textFrames.push(tf4);
         }
     }
@@ -1653,11 +1653,11 @@ function alignTextGrid(direction, fontFamily, fontSize, fontBold, fontColor, ali
         }
     } else if (dir === "left") {
         for (var r = 0; r < grid.rows.length; r++) {
-            targets.push({ x: grid.columns[0].left - distancePt, y: grid.rows[r].centerY });
+            targets.push({ refX: grid.columns[0].left, refY: grid.rows[r].centerY, side: "left" });
         }
     } else if (dir === "right") {
         for (var r2 = 0; r2 < grid.rows.length; r2++) {
-            targets.push({ x: grid.columns[grid.columns.length - 1].right + distancePt, y: grid.rows[r2].centerY });
+            targets.push({ refX: grid.columns[grid.columns.length - 1].right, refY: grid.rows[r2].centerY, side: "right" });
         }
     }
 
@@ -1676,8 +1676,17 @@ function alignTextGrid(direction, fontFamily, fontSize, fontBold, fontColor, ali
     for (var m = 0; m < count; m++) {
         var tf = sortedTFs[m];
         var target = targets[m];
-        tf.left = target.x;
-        tf.top = target.y;
+        applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment);
+        if (target.side === "left") {
+            tf.left = target.refX - distancePt - tf.width;
+            tf.top = target.refY + tf.height / 2;
+        } else if (target.side === "right") {
+            tf.left = target.refX + distancePt;
+            tf.top = target.refY + tf.height / 2;
+        } else {
+            tf.left = target.x - tf.width / 2;
+            tf.top = target.y;
+        }
         applyTextStyle(tf, fontFamily, fontSize, fontBold, fontColor, alignment);
     }
 
@@ -1987,26 +1996,42 @@ function arrayClip(gapMm) {
         rowHeights.push(maxH);
     }
 
-    // Position each clip at its grid cell
+    // Additional layout measurements for row mode
+    var imgColWidths = [];
+    for (var im = 0; im < numImgs; im++) {
+        var maxW = 0;
+        for (var rr = 0; rr < numRects; rr++) {
+            var w = getVisibleInfo(clipGroups[rr][im]).width;
+            if (w > maxW) maxW = w;
+        }
+        imgColWidths.push(maxW);
+    }
+    var rectRowHeights = [];
+    for (var rr2 = 0; rr2 < numRects; rr2++) {
+        var maxH = 0;
+        for (var im2 = 0; im2 < numImgs; im2++) {
+            var h = getVisibleInfo(clipGroups[rr2][im2]).height;
+            if (h > maxH) maxH = h;
+        }
+        rectRowHeights.push(maxH);
+    }
+
+    // Position each clip at its grid cell — align with original image positions
     if (mode === "column") {
         var cx = resultStartX;
         for (var r = 0; r < numRects; r++) {
-            var cy = resultStartY;
             for (var im = 0; im < numImgs; im++) {
-                moveItemTopLeftTo(clipGroups[r][im], cx, cy);
-                cy -= rowHeights[im] + gapPt;
+                moveItemTopLeftTo(clipGroups[r][im], cx, sortedInfos[im].top);
             }
             cx += colWidths[r] + gapPt;
         }
     } else {
         var cy = resultStartY;
-        for (var im = 0; im < numImgs; im++) {
-            var cx = resultStartX;
-            for (var r = 0; r < numRects; r++) {
-                moveItemTopLeftTo(clipGroups[r][im], cx, cy);
-                cx += colWidths[r] + gapPt;
+        for (var r = 0; r < numRects; r++) {
+            for (var im = 0; im < numImgs; im++) {
+                moveItemTopLeftTo(clipGroups[r][im], sortedInfos[im].left, cy);
             }
-            cy -= rowHeights[im] + gapPt;
+            cy -= rectRowHeights[r] + gapPt;
         }
     }
 
